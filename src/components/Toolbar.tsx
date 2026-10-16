@@ -81,10 +81,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
               : 'text-slate-400 hover:text-slate-200'
           }`}
-          title="Foto cuadrada con marco anti-recorte para iPhone"
+          title="Conserva la proporción original con esquinas redondeadas anti-recorte"
         >
           <Square className="w-3.5 h-3.5 shrink-0" />
-          <span>Cuadrado</span>
+          <span>Redondeado</span>
         </button>
 
         <button
@@ -106,9 +106,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <div className="flex items-center justify-between text-xs text-slate-300 px-1 py-0.5">
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
               <Square className="w-3.5 h-3.5" />
-              Modo Cuadrado iPhone activo
+              Proporción original con esquinas redondeadas
             </span>
-            <span className="text-[11px] text-slate-400">Listo para Fotos o WhatsApp</span>
+            <span className="text-[11px] text-slate-400">Sin recortar contenido</span>
           </div>
         )}
 
@@ -326,7 +326,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 {displayMode === 'cutout'
                   ? 'Copiar Sticker'
                   : displayMode === 'square'
-                  ? 'Copiar Cuadrado'
+                  ? 'Copiar Redondeado'
                   : 'Copiar Foto'}
               </span>
             </>

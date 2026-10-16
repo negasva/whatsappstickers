@@ -480,7 +480,7 @@ export const App: React.FC = () => {
               onSetDisplayMode={(mode) => {
                 setDisplayMode(mode);
                 if (mode === 'square') {
-                  showToast('Modo Cuadrado iPhone activo');
+                  showToast('Modo Redondeado (conserva proporciones)');
                 } else if (mode === 'cutout') {
                   showToast('Modo Recorte activo');
                 } else {

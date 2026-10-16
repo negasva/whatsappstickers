@@ -255,24 +255,23 @@ export function exportStickerCanvas(
   }
 
   if (displayMode === 'square') {
-    // Modo Cuadrado iPhone: card with 24px transparent boundary & rounded corners
-    // This tricks Apple Vision framework into lifting the whole card instead of isolating faces/pets!
-    const padding = 26;
-    const cardSize = targetSize - padding * 2;
-    const radius = 24;
+    // Proportional rounded card preserving original image aspect ratio (1080x700, 700x1080, etc.)
+    const margin = 20;
+    const maxW = targetSize - margin * 2;
+    const maxH = targetSize - margin * 2;
+
+    const scale = Math.min(maxW / crop.width, maxH / crop.height);
+    const cardW = Math.round(crop.width * scale);
+    const cardH = Math.round(crop.height * scale);
+    const dx = Math.round((targetSize - cardW) / 2);
+    const dy = Math.round((targetSize - cardH) / 2);
+    const radius = Math.max(16, Math.min(32, Math.round(Math.min(cardW, cardH) * 0.08)));
 
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(padding, padding, cardSize, cardSize, radius);
+    ctx.roundRect(dx, dy, cardW, cardH, radius);
     ctx.clip();
-
-    // Scale to fill the square card nicely
-    const scale = Math.max(cardSize / crop.width, cardSize / crop.height);
-    const dw = crop.width * scale;
-    const dh = crop.height * scale;
-    const dx = padding + (cardSize - dw) / 2;
-    const dy = padding + (cardSize - dh) / 2;
-    ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+    ctx.drawImage(tempCanvas, dx, dy, cardW, cardH);
     ctx.restore();
   } else {
     // Normal scaling
