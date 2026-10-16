@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import type { TextOverlay } from '../utils/imageProcessing';
+import type { TextOverlay, StickerDisplayMode } from '../utils/imageProcessing';
 
 export type ToolType = 'brush' | 'eraser' | 'crop' | 'text' | 'preview';
 
@@ -18,7 +18,7 @@ interface EditorCanvasProps {
   showGhost: boolean;
   cropBox: CropBox;
   textOverlay: TextOverlay | null;
-  isFullImage?: boolean;
+  displayMode: StickerDisplayMode;
   onMaskModified: () => void;
   onCropChange: (box: CropBox) => void;
   onTextPositionChange: (x: number, y: number) => void;
@@ -32,7 +32,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   showGhost,
   cropBox,
   textOverlay,
-  isFullImage = false,
+  displayMode = 'cutout',
   onMaskModified,
   onCropChange,
   onTextPositionChange,
@@ -98,12 +98,22 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
     ctx.clearRect(0, 0, width, height);
 
-    if (isFullImage) {
-      // FULL IMAGE MODE: Draw entire original image with 100% opacity
+    if (displayMode === 'full') {
       ctx.drawImage(originalImg, 0, 0, width, height);
+    } else if (displayMode === 'square') {
+      const padding = Math.round(width * 0.05);
+      const cardW = width - padding * 2;
+      const cardH = height - padding * 2;
+      const radius = Math.round(width * 0.05);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(padding, padding, cardW, cardH, radius);
+      ctx.clip();
+      ctx.drawImage(originalImg, 0, 0, width, height);
+      ctx.restore();
     } else {
       // CUTOUT MODE:
-      // 1. Ghost Background (Original Image at ~30% opacity)
       const isGhostMode = showGhost || tool === 'brush' || tool === 'eraser';
       if (isGhostMode) {
         ctx.save();
@@ -112,7 +122,6 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         ctx.restore();
       }
 
-      // 2. Cutout Image at 100% opacity
       const compCanvas = compositeCanvasRef.current;
       if (compCanvas) {
         if (compCanvas.width !== width || compCanvas.height !== height) {
@@ -196,7 +205,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
       ctx.restore();
     }
-  }, [originalImg, maskCanvas, tool, showGhost, cropBox, textOverlay, isFullImage]);
+  }, [originalImg, maskCanvas, tool, showGhost, cropBox, textOverlay, displayMode]);
 
   useEffect(() => {
     renderCanvas();

@@ -20,6 +20,7 @@ import {
   exportStickerCanvas,
   copyCanvasToClipboard,
   type TextOverlay,
+  type StickerDisplayMode,
 } from './utils/imageProcessing';
 
 export const App: React.FC = () => {
@@ -30,8 +31,8 @@ export const App: React.FC = () => {
   const [loadingStep, setLoadingStep] = useState('Recortando foto...');
   const [isAiComplete, setIsAiComplete] = useState(false);
 
-  // Full image vs Cutout toggle
-  const [isFullImage, setIsFullImage] = useState(false);
+  // Display Mode: 'cutout' | 'square' | 'full'
+  const [displayMode, setDisplayMode] = useState<StickerDisplayMode>('cutout');
 
   // Cancellation ref
   const isCancelledRef = useRef(false);
@@ -125,17 +126,19 @@ export const App: React.FC = () => {
     isCancelledRef.current = false;
     setIsLoading(true);
     setIsAiComplete(false);
-    setIsFullImage(false);
+    setDisplayMode('cutout');
     setLoadingStep('Optimizando foto...');
 
     try {
-      const { optimizedBlob, img, width, height } = await optimizeImageForSticker(file, 800);
+      // 1. Pre-scale to 640px max (rock solid on mobile Safari)
+      const { optimizedBlob, img, width, height } = await optimizeImageForSticker(file, 640);
 
       if (isCancelledRef.current) return;
       setOriginalImg(img);
 
-      setLoadingStep('Recortando fondo con IA...');
+      setLoadingStep('Aislando sujeto con IA...');
 
+      // 2. Run background removal with Safari safety parameters
       const cutoutBlob = await autoRemoveBackground(optimizedBlob);
 
       if (isCancelledRef.current) return;
@@ -169,14 +172,14 @@ export const App: React.FC = () => {
     } catch (err) {
       if (isCancelledRef.current) return;
       console.error('Error in AI cutout:', err);
-      showToast('No se pudo recortar automático. Abriendo para edición manual.');
+      showToast('No se pudo recortar automático. Abriendo modo manual.');
       handleFallbackManual(file);
     }
   };
 
   const handleFallbackManual = async (file: File | Blob) => {
     try {
-      const { img, width, height } = await optimizeImageForSticker(file, 800);
+      const { img, width, height } = await optimizeImageForSticker(file, 640);
       setOriginalImg(img);
 
       const mask = document.createElement('canvas');
@@ -249,7 +252,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('paste', handlePaste);
   }, []);
 
-  // Copy sticker (respects isFullImage state)
+  // Copy sticker (respects displayMode)
   const handleCopySticker = async () => {
     if (!originalImg || !maskCanvas) return;
 
@@ -259,7 +262,7 @@ export const App: React.FC = () => {
         maskCanvas,
         textOverlay,
         cropBox,
-        isFullImage
+        displayMode
       );
       const success = await copyCanvasToClipboard(outCanvas);
 
@@ -270,76 +273,73 @@ export const App: React.FC = () => {
           spread: 60,
           origin: { y: 0.85 },
         });
-        showToast(
-          isFullImage
-            ? '¡Foto completa copiada! Pégala en WhatsApp.'
-            : '¡Sticker recortado copiado! Pégalo en WhatsApp.'
-        );
+        showToast('¡Copiado! Pégalo en tu chat de WhatsApp.');
         setTimeout(() => setCopied(false), 3000);
       } else {
-        handleDownloadPNG(outCanvas);
-        showToast('Descargando imagen para WhatsApp.');
+        handleSaveDirectToPhotos(outCanvas);
       }
     } catch (err) {
       console.error('Error copying sticker:', err);
-      showToast('Error al copiar. Usa el botón de compartir.');
+      showToast('Error al copiar. Usa el botón Guardar en Fotos.');
     }
   };
 
-  const handleDownloadPNG = (canvas: HTMLCanvasElement) => {
-    const link = document.createElement('a');
-    link.download = `${isFullImage ? 'foto' : 'sticker'}-${Date.now()}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+  // Save directly into Apple Fotos (Photos app) via iOS Share Sheet or download
+  const handleSaveDirectToPhotos = (canvas: HTMLCanvasElement) => {
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+
+      const fileName = `${displayMode === 'cutout' ? 'sticker' : 'foto'}-${Date.now()}.png`;
+      const file = new File([blob], fileName, { type: 'image/png' });
+
+      // If on mobile (iOS Safari / Android) with Web Share API:
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'Sticker para WhatsApp',
+          });
+          showToast('En el menú, toca "Guardar imagen" para enviarla directo a Fotos.');
+          return;
+        } catch (err: any) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+
+      // Fallback for Desktop browser
+      const link = document.createElement('a');
+      link.download = fileName;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      showToast('Descargando imagen transparente (512x512)...');
+    }, 'image/png');
   };
 
   const handleShareSticker = async () => {
     if (!originalImg || !maskCanvas) return;
-
     const outCanvas = exportStickerCanvas(
       originalImg,
       maskCanvas,
       textOverlay,
       cropBox,
-      isFullImage
+      displayMode
     );
-
-    outCanvas.toBlob(async (blob) => {
-      if (!blob) return;
-
-      const file = new File([blob], `${isFullImage ? 'foto' : 'sticker'}.png`, {
-        type: 'image/png',
-      });
-
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: isFullImage ? 'Foto para WhatsApp' : 'Sticker para WhatsApp',
-          });
-        } catch {
-          // Dismissed
-        }
-      } else {
-        handleDownloadPNG(outCanvas);
-        showToast('Descargando imagen transparente (512x512)...');
-      }
-    }, 'image/png');
+    handleSaveDirectToPhotos(outCanvas);
   };
 
   const handleBackToLanding = () => {
     setOriginalImg(null);
     setMaskCanvas(null);
     setTool('preview');
-    setIsFullImage(false);
+    setDisplayMode('cutout');
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b141a] text-slate-100 font-sans antialiased overflow-x-hidden">
+    <div className="h-[100dvh] max-h-[100dvh] w-full flex flex-col justify-between bg-[#0b141a] text-slate-100 font-sans antialiased overflow-hidden select-none">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-bold text-xs sm:text-sm shadow-xl flex items-center gap-2 animate-bounce">
-          <Info className="w-4 h-4 shrink-0" />
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 px-3.5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-bold text-xs shadow-xl flex items-center gap-1.5 animate-bounce max-w-[90vw] text-center">
+          <Info className="w-3.5 h-3.5 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -357,60 +357,60 @@ export const App: React.FC = () => {
       {!originalImg || !maskCanvas ? (
         <LandingPage onImageSelected={handleImageSelected} />
       ) : (
-        <div className="flex-1 flex flex-col justify-between max-w-xl mx-auto w-full h-screen max-h-screen overflow-hidden">
-          {/* Top Bar */}
-          <header className="flex items-center justify-between px-3 py-2 border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md">
+        <div className="flex-1 flex flex-col justify-between max-w-xl mx-auto w-full h-[100dvh] max-h-[100dvh] overflow-hidden">
+          {/* Top Bar (Height ~44px, compact) */}
+          <header className="flex items-center justify-between px-2.5 py-1.5 border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md shrink-0">
             <button
               onClick={handleBackToLanding}
-              className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 transition cursor-pointer"
+              className="flex items-center gap-1 text-xs font-semibold text-slate-300 hover:text-white px-2 py-1 rounded-lg bg-slate-800/80 transition cursor-pointer"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
               <span>Otra foto</span>
             </button>
 
             {/* Undo / Redo / Reset */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5">
               <button
                 onClick={handleUndo}
-                disabled={!canUndo || isFullImage}
+                disabled={!canUndo || displayMode !== 'cutout'}
                 title="Deshacer"
-                className={`p-2 rounded-lg transition cursor-pointer ${
-                  canUndo && !isFullImage
+                className={`p-1.5 rounded-lg transition cursor-pointer ${
+                  canUndo && displayMode === 'cutout'
                     ? 'text-slate-200 hover:bg-slate-800'
                     : 'text-slate-600 cursor-not-allowed'
                 }`}
               >
-                <Undo2 className="w-4 h-4" />
+                <Undo2 className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={handleRedo}
-                disabled={!canRedo || isFullImage}
+                disabled={!canRedo || displayMode !== 'cutout'}
                 title="Rehacer"
-                className={`p-2 rounded-lg transition cursor-pointer ${
-                  canRedo && !isFullImage
+                className={`p-1.5 rounded-lg transition cursor-pointer ${
+                  canRedo && displayMode === 'cutout'
                     ? 'text-slate-200 hover:bg-slate-800'
                     : 'text-slate-600 cursor-not-allowed'
                 }`}
               >
-                <Redo2 className="w-4 h-4" />
+                <Redo2 className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={handleResetToAI}
-                disabled={isFullImage}
-                title="Restablecer al recorte inicial"
-                className={`p-2 rounded-lg transition cursor-pointer ${
-                  !isFullImage
+                disabled={displayMode !== 'cutout'}
+                title="Restablecer recorte"
+                className={`p-1.5 rounded-lg transition cursor-pointer ${
+                  displayMode === 'cutout'
                     ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                     : 'text-slate-600 cursor-not-allowed'
                 }`}
               >
-                <RotateCcw className="w-4 h-4" />
+                <RotateCcw className="w-3.5 h-3.5" />
               </button>
             </div>
           </header>
 
-          {/* Interactive Canvas Editor */}
-          <main className="flex-1 flex items-center justify-center overflow-hidden">
+          {/* Interactive Canvas Editor (flex-1, shrinks/expands to fit exact screen without scrolling) */}
+          <main className="flex-1 min-h-0 flex items-center justify-center p-1.5 overflow-hidden">
             <EditorCanvas
               originalImg={originalImg}
               maskCanvas={maskCanvas}
@@ -419,7 +419,7 @@ export const App: React.FC = () => {
               showGhost={showGhost}
               cropBox={cropBox}
               textOverlay={textOverlay}
-              isFullImage={isFullImage}
+              displayMode={displayMode}
               onMaskModified={() => {
                 if (maskCanvas) pushHistory(maskCanvas);
               }}
@@ -432,8 +432,8 @@ export const App: React.FC = () => {
             />
           </main>
 
-          {/* Bottom Toolbar & Copy Button */}
-          <footer>
+          {/* Bottom Toolbar & Copy Button (Compact, zero scroll) */}
+          <footer className="shrink-0">
             <Toolbar
               tool={tool}
               onToolSelect={setTool}
@@ -447,7 +447,7 @@ export const App: React.FC = () => {
                 if (maskCanvas) {
                   const fit = getMaskBoundingBox(maskCanvas);
                   setCropBox(fit);
-                  showToast('Encuadre ajustado al sujeto');
+                  showToast('Encuadre ajustado');
                 }
               }}
               onResetCrop={() => {
@@ -470,22 +470,22 @@ export const App: React.FC = () => {
                   maskCanvas,
                   textOverlay,
                   cropBox,
-                  isFullImage
+                  displayMode
                 );
-                handleDownloadPNG(outCanvas);
-                showToast('¡Guardado! Ve a Fotos para agregarlo a WhatsApp sin borde.');
+                handleSaveDirectToPhotos(outCanvas);
               }}
               copied={copied}
               isProcessing={isLoading}
-              isFullImage={isFullImage}
-              onToggleFullImage={() => {
-                const nextState = !isFullImage;
-                setIsFullImage(nextState);
-                showToast(
-                  nextState
-                    ? 'Modo foto completa (sin recorte)'
-                    : 'Modo sticker recortado'
-                );
+              displayMode={displayMode}
+              onSetDisplayMode={(mode) => {
+                setDisplayMode(mode);
+                if (mode === 'square') {
+                  showToast('Modo Cuadrado iPhone activo');
+                } else if (mode === 'cutout') {
+                  showToast('Modo Recorte activo');
+                } else {
+                  showToast('Modo Foto completa');
+                }
               }}
             />
           </footer>

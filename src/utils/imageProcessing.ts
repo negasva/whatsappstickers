@@ -193,12 +193,17 @@ export function getMaskBoundingBox(maskCanvas: HTMLCanvasElement): {
 /**
  * Render the final sticker image onto a 512x512 canvas (WhatsApp sticker spec)
  */
+export type StickerDisplayMode = 'cutout' | 'square' | 'full';
+
+/**
+ * Render the final sticker image onto a 512x512 canvas (WhatsApp sticker spec)
+ */
 export function exportStickerCanvas(
   originalImg: HTMLImageElement,
   maskCanvas: HTMLCanvasElement,
   textOverlay?: TextOverlay | null,
   cropBox?: { x: number; y: number; width: number; height: number },
-  isFullImage = false
+  displayMode: StickerDisplayMode = 'cutout'
 ): HTMLCanvasElement {
   const targetSize = 512;
   const outCanvas = document.createElement('canvas');
@@ -232,8 +237,8 @@ export function exportStickerCanvas(
     crop.height
   );
 
-  // Apply cutout mask only when not in full image mode
-  if (!isFullImage) {
+  // Apply cutout mask only in cutout mode
+  if (displayMode === 'cutout') {
     tempCtx.globalCompositeOperation = 'destination-in';
     tempCtx.drawImage(
       maskCanvas,
@@ -249,13 +254,38 @@ export function exportStickerCanvas(
     tempCtx.globalCompositeOperation = 'source-over';
   }
 
-  const scale = Math.min((targetSize - 24) / crop.width, (targetSize - 24) / crop.height);
-  const drawWidth = crop.width * scale;
-  const drawHeight = crop.height * scale;
-  const dx = (targetSize - drawWidth) / 2;
-  const dy = (targetSize - drawHeight) / 2;
+  if (displayMode === 'square') {
+    // Modo Cuadrado iPhone: card with 24px transparent boundary & rounded corners
+    // This tricks Apple Vision framework into lifting the whole card instead of isolating faces/pets!
+    const padding = 26;
+    const cardSize = targetSize - padding * 2;
+    const radius = 24;
 
-  ctx.drawImage(tempCanvas, dx, dy, drawWidth, drawHeight);
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(padding, padding, cardSize, cardSize, radius);
+    ctx.clip();
+
+    // Scale to fill the square card nicely
+    const scale = Math.max(cardSize / crop.width, cardSize / crop.height);
+    const dw = crop.width * scale;
+    const dh = crop.height * scale;
+    const dx = padding + (cardSize - dw) / 2;
+    const dy = padding + (cardSize - dh) / 2;
+    ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+    ctx.restore();
+  } else {
+    // Normal scaling
+    const padding = displayMode === 'full' ? 0 : 20;
+    const available = targetSize - padding * 2;
+    const scale = Math.min(available / crop.width, available / crop.height);
+    const drawWidth = crop.width * scale;
+    const drawHeight = crop.height * scale;
+    const dx = (targetSize - drawWidth) / 2;
+    const dy = (targetSize - drawHeight) / 2;
+
+    ctx.drawImage(tempCanvas, dx, dy, drawWidth, drawHeight);
+  }
 
   if (textOverlay && textOverlay.text.trim()) {
     ctx.save();
