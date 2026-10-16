@@ -56,11 +56,16 @@ export const App: React.FC = () => {
   // Copy feedback & toast
   const [copied, setCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   const showToast = (msg: string) => {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
     setToastMessage(msg);
-    setTimeout(() => {
+    toastTimerRef.current = window.setTimeout(() => {
       setToastMessage(null);
+      toastTimerRef.current = null;
     }, 3500);
   };
 
@@ -152,8 +157,7 @@ export const App: React.FC = () => {
         initialMaskDataRef.current = maskCtx.getImageData(0, 0, mask.width, mask.height);
       }
 
-      const initialBox = getMaskBoundingBox(mask);
-      setCropBox(initialBox);
+      setCropBox({ x: 0, y: 0, width, height });
 
       historyRef.current = [];
       historyIndexRef.current = -1;

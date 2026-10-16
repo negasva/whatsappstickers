@@ -5,17 +5,15 @@ export interface TextOverlay {
   size: number;
   color: string;
   strokeColor: string;
-  x: number; // 0 to 1 relative
-  y: number; // 0 to 1 relative
+  x: number;
+  y: number;
 }
 
-/**
- * Downscale heavy camera photos to an optimal sticker resolution (e.g. max 800px)
- * This cuts processing time from 2+ minutes down to 3-5 seconds!
- */
+export type StickerDisplayMode = 'cutout' | 'square' | 'full';
+
 export async function optimizeImageForSticker(
   file: File | Blob,
-  maxDimension = 800
+  maxDimension = 640
 ): Promise<{
   optimizedBlob: Blob;
   img: HTMLImageElement;
@@ -26,18 +24,9 @@ export async function optimizeImageForSticker(
   const origW = originalImg.naturalWidth;
   const origH = originalImg.naturalHeight;
 
-  let targetW = origW;
-  let targetH = origH;
-
-  if (origW > maxDimension || origH > maxDimension) {
-    if (origW >= origH) {
-      targetW = maxDimension;
-      targetH = Math.round((origH / origW) * maxDimension);
-    } else {
-      targetH = maxDimension;
-      targetW = Math.round((origW / origH) * maxDimension);
-    }
-  }
+  const scale = Math.min(1, maxDimension / Math.max(origW, origH));
+  const targetW = Math.max(1, Math.round(origW * scale));
+  const targetH = Math.max(1, Math.round(origH * scale));
 
   const canvas = document.createElement('canvas');
   canvas.width = targetW;
@@ -48,39 +37,31 @@ export async function optimizeImageForSticker(
   ctx.drawImage(originalImg, 0, 0, targetW, targetH);
 
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      async (blob) => {
-        if (!blob) {
-          reject(new Error('Failed to create optimized image blob'));
-          return;
-        }
-        const resizedImg = await blobToImage(blob);
-        resolve({
-          optimizedBlob: blob,
-          img: resizedImg,
-          width: targetW,
-          height: targetH,
-        });
-      },
-      'image/jpeg',
-      0.92
-    );
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        reject(new Error('Failed to create image blob'));
+        return;
+      }
+      const resizedImg = await blobToImage(blob);
+      resolve({
+        optimizedBlob: blob,
+        img: resizedImg,
+        width: targetW,
+        height: targetH,
+      });
+    }, 'image/png');
   });
 }
 
-/**
- * Remove background using lightweight quantized model (isnet_quint8)
- * with GPU/WebGPU acceleration when available.
- */
 export async function autoRemoveBackground(
   imageSource: Blob | File | string,
   onProgress?: (ratio: number) => void
 ): Promise<Blob> {
   return await removeBackground(imageSource, {
-    model: 'isnet_quint8', // 4x smaller, fastest inference
+    model: 'isnet_quint8',
     rescale: true,
-    proxyToWorker: false, // Prevents mobile Safari worker crashes and blob CORS errors
-    device: 'cpu', // Reliable CPU execution on iOS Safari
+    proxyToWorker: false,
+    device: 'cpu',
     progress: (_key, current, total) => {
       if (total > 0 && onProgress) {
         onProgress(Math.min(1, current / total));
@@ -89,9 +70,6 @@ export async function autoRemoveBackground(
   });
 }
 
-/**
- * Convert Blob or File to HTMLImageElement
- */
 export function blobToImage(blob: Blob | File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
@@ -109,9 +87,6 @@ export function blobToImage(blob: Blob | File): Promise<HTMLImageElement> {
   });
 }
 
-/**
- * Create a mask canvas from a transparent cut-out image
- */
 export function createMaskFromCutout(
   cutoutImg: HTMLImageElement,
   width: number,
@@ -127,7 +102,6 @@ export function createMaskFromCutout(
   const imgData = ctx.getImageData(0, 0, width, height);
   const data = imgData.data;
 
-  // Mask representation: 255 (white) where alpha > 20
   for (let i = 0; i < data.length; i += 4) {
     const alpha = data[i + 3];
     data[i] = 255;
@@ -139,9 +113,6 @@ export function createMaskFromCutout(
   return maskCanvas;
 }
 
-/**
- * Auto-trim transparent pixels and return bounding box
- */
 export function getMaskBoundingBox(maskCanvas: HTMLCanvasElement): {
   x: number;
   y: number;
@@ -176,7 +147,7 @@ export function getMaskBoundingBox(maskCanvas: HTMLCanvasElement): {
 
   if (!found) return { x: 0, y: 0, width, height };
 
-  const padding = 12;
+  const padding = 8;
   minX = Math.max(0, minX - padding);
   minY = Math.max(0, minY - padding);
   maxX = Math.min(width, maxX + padding);
@@ -190,14 +161,6 @@ export function getMaskBoundingBox(maskCanvas: HTMLCanvasElement): {
   };
 }
 
-/**
- * Render the final sticker image onto a 512x512 canvas (WhatsApp sticker spec)
- */
-export type StickerDisplayMode = 'cutout' | 'square' | 'full';
-
-/**
- * Render the final sticker image onto a 512x512 canvas (WhatsApp sticker spec)
- */
 export function exportStickerCanvas(
   originalImg: HTMLImageElement,
   maskCanvas: HTMLCanvasElement,
@@ -206,12 +169,6 @@ export function exportStickerCanvas(
   displayMode: StickerDisplayMode = 'cutout'
 ): HTMLCanvasElement {
   const targetSize = 512;
-  const outCanvas = document.createElement('canvas');
-  outCanvas.width = targetSize;
-  outCanvas.height = targetSize;
-  const ctx = outCanvas.getContext('2d');
-  if (!ctx) return outCanvas;
-
   const crop = cropBox || {
     x: 0,
     y: 0,
@@ -223,7 +180,7 @@ export function exportStickerCanvas(
   tempCanvas.width = crop.width;
   tempCanvas.height = crop.height;
   const tempCtx = tempCanvas.getContext('2d');
-  if (!tempCtx) return outCanvas;
+  if (!tempCtx) return tempCanvas;
 
   tempCtx.drawImage(
     originalImg,
@@ -237,7 +194,6 @@ export function exportStickerCanvas(
     crop.height
   );
 
-  // Apply cutout mask only in cutout mode
   if (displayMode === 'cutout') {
     tempCtx.globalCompositeOperation = 'destination-in';
     tempCtx.drawImage(
@@ -254,41 +210,49 @@ export function exportStickerCanvas(
     tempCtx.globalCompositeOperation = 'source-over';
   }
 
-  if (displayMode === 'square') {
-    // Proportional rounded card preserving original image aspect ratio (1080x700, 700x1080, etc.)
-    const margin = 20;
-    const maxW = targetSize - margin * 2;
-    const maxH = targetSize - margin * 2;
+  const outCanvas = document.createElement('canvas');
+  const ctx = outCanvas.getContext('2d');
+  if (!ctx) return outCanvas;
 
-    const scale = Math.min(maxW / crop.width, maxH / crop.height);
-    const cardW = Math.round(crop.width * scale);
-    const cardH = Math.round(crop.height * scale);
-    const dx = Math.round((targetSize - cardW) / 2);
-    const dy = Math.round((targetSize - cardH) / 2);
-    const radius = Math.max(16, Math.min(32, Math.round(Math.min(cardW, cardH) * 0.08)));
+  if (displayMode === 'square') {
+    // Keep exact image aspect ratio, zero cropped content, rounded corners + thin 4px transparent margin for iOS subject lift
+    const margin = 4;
+    const maxDim = targetSize - margin * 2;
+    const scale = Math.min(maxDim / crop.width, maxDim / crop.height);
+    const cardW = Math.max(1, Math.round(crop.width * scale));
+    const cardH = Math.max(1, Math.round(crop.height * scale));
+    const radius = Math.max(12, Math.round(Math.min(cardW, cardH) * 0.065));
+
+    outCanvas.width = cardW + margin * 2;
+    outCanvas.height = cardH + margin * 2;
 
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(dx, dy, cardW, cardH, radius);
+    ctx.roundRect(margin, margin, cardW, cardH, radius);
     ctx.clip();
-    ctx.drawImage(tempCanvas, dx, dy, cardW, cardH);
+    ctx.drawImage(tempCanvas, margin, margin, cardW, cardH);
     ctx.restore();
+  } else if (displayMode === 'full') {
+    const scale = Math.min(targetSize / crop.width, targetSize / crop.height);
+    outCanvas.width = Math.max(1, Math.round(crop.width * scale));
+    outCanvas.height = Math.max(1, Math.round(crop.height * scale));
+    ctx.drawImage(tempCanvas, 0, 0, outCanvas.width, outCanvas.height);
   } else {
-    // Normal scaling
-    const padding = displayMode === 'full' ? 0 : 20;
+    outCanvas.width = targetSize;
+    outCanvas.height = targetSize;
+    const padding = 16;
     const available = targetSize - padding * 2;
     const scale = Math.min(available / crop.width, available / crop.height);
     const drawWidth = crop.width * scale;
     const drawHeight = crop.height * scale;
     const dx = (targetSize - drawWidth) / 2;
     const dy = (targetSize - drawHeight) / 2;
-
     ctx.drawImage(tempCanvas, dx, dy, drawWidth, drawHeight);
   }
 
   if (textOverlay && textOverlay.text.trim()) {
     ctx.save();
-    const fontSize = Math.max(16, Math.round(textOverlay.size * (targetSize / 400)));
+    const fontSize = Math.max(16, Math.round(textOverlay.size * (Math.max(outCanvas.width, outCanvas.height) / 400)));
     ctx.font = `800 ${fontSize}px "Poppins", "Impact", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -296,8 +260,8 @@ export function exportStickerCanvas(
     ctx.strokeStyle = textOverlay.strokeColor || '#000000';
     ctx.fillStyle = textOverlay.color || '#ffffff';
 
-    const tx = targetSize * textOverlay.x;
-    const ty = targetSize * textOverlay.y;
+    const tx = outCanvas.width * textOverlay.x;
+    const ty = outCanvas.height * textOverlay.y;
 
     ctx.strokeText(textOverlay.text, tx, ty);
     ctx.fillText(textOverlay.text, tx, ty);
@@ -307,9 +271,6 @@ export function exportStickerCanvas(
   return outCanvas;
 }
 
-/**
- * Copy transparent PNG image to clipboard
- */
 export async function copyCanvasToClipboard(canvas: HTMLCanvasElement): Promise<boolean> {
   return new Promise((resolve) => {
     canvas.toBlob(async (blob) => {

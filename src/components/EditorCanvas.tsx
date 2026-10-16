@@ -101,14 +101,11 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     if (displayMode === 'full') {
       ctx.drawImage(originalImg, 0, 0, width, height);
     } else if (displayMode === 'square') {
-      const padding = Math.round(width * 0.05);
-      const cardW = width - padding * 2;
-      const cardH = height - padding * 2;
-      const radius = Math.round(width * 0.05);
+      const radius = Math.max(12, Math.round(Math.min(width, height) * 0.065));
 
       ctx.save();
       ctx.beginPath();
-      ctx.roundRect(padding, padding, cardW, cardH, radius);
+      ctx.roundRect(0, 0, width, height, radius);
       ctx.clip();
       ctx.drawImage(originalImg, 0, 0, width, height);
       ctx.restore();
@@ -275,7 +272,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         coords.y / originalImg.naturalHeight
       );
     } else if (tool === 'crop') {
-      isDraggingCropRef.current = 'move';
+      const hitRadius = Math.max(20, Math.round(originalImg.naturalWidth / 25));
+      const { x, y, width, height } = cropBox;
+      let mode = 'move';
+      if (Math.hypot(coords.x - x, coords.y - y) <= hitRadius) mode = 'nw';
+      else if (Math.hypot(coords.x - (x + width), coords.y - y) <= hitRadius) mode = 'ne';
+      else if (Math.hypot(coords.x - x, coords.y - (y + height)) <= hitRadius) mode = 'sw';
+      else if (Math.hypot(coords.x - (x + width), coords.y - (y + height)) <= hitRadius) mode = 'se';
+
+      isDraggingCropRef.current = mode;
       dragStartRef.current = {
         x: coords.x,
         y: coords.y,
@@ -311,15 +316,47 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       const dx = coords.x - dragStartRef.current.x;
       const dy = coords.y - dragStartRef.current.y;
       const initial = dragStartRef.current.crop;
+      const mode = isDraggingCropRef.current;
+      const minSize = 40;
+      const maxW = originalImg.naturalWidth;
+      const maxH = originalImg.naturalHeight;
 
-      const newX = Math.max(0, Math.min(originalImg.naturalWidth - initial.width, initial.x + dx));
-      const newY = Math.max(0, Math.min(originalImg.naturalHeight - initial.height, initial.y + dy));
-
-      onCropChange({
-        ...initial,
-        x: newX,
-        y: newY,
-      });
+      if (mode === 'move') {
+        const newX = Math.max(0, Math.min(maxW - initial.width, initial.x + dx));
+        const newY = Math.max(0, Math.min(maxH - initial.height, initial.y + dy));
+        onCropChange({ ...initial, x: newX, y: newY });
+      } else if (mode === 'se') {
+        const newW = Math.max(minSize, Math.min(maxW - initial.x, initial.width + dx));
+        const newH = Math.max(minSize, Math.min(maxH - initial.y, initial.height + dy));
+        onCropChange({ ...initial, width: newW, height: newH });
+      } else if (mode === 'nw') {
+        const newX = Math.max(0, Math.min(initial.x + initial.width - minSize, initial.x + dx));
+        const newY = Math.max(0, Math.min(initial.y + initial.height - minSize, initial.y + dy));
+        onCropChange({
+          x: newX,
+          y: newY,
+          width: initial.width - (newX - initial.x),
+          height: initial.height - (newY - initial.y),
+        });
+      } else if (mode === 'ne') {
+        const newY = Math.max(0, Math.min(initial.y + initial.height - minSize, initial.y + dy));
+        const newW = Math.max(minSize, Math.min(maxW - initial.x, initial.width + dx));
+        onCropChange({
+          x: initial.x,
+          y: newY,
+          width: newW,
+          height: initial.height - (newY - initial.y),
+        });
+      } else if (mode === 'sw') {
+        const newX = Math.max(0, Math.min(initial.x + initial.width - minSize, initial.x + dx));
+        const newH = Math.max(minSize, Math.min(maxH - initial.y, initial.height + dy));
+        onCropChange({
+          x: newX,
+          y: initial.y,
+          width: initial.width - (newX - initial.x),
+          height: newH,
+        });
+      }
     }
   };
 
