@@ -10,7 +10,7 @@ import {
 import { LandingPage } from './components/LandingPage';
 import { EditorCanvas, type ToolType } from './components/EditorCanvas';
 import { Toolbar } from './components/Toolbar';
-import { LoadingSkeleton } from './components/LoadingSkeleton';
+import { LoadingModal } from './components/LoadingModal';
 import {
   optimizeImageForSticker,
   autoRemoveBackground,
@@ -23,12 +23,15 @@ import {
 } from './utils/imageProcessing';
 
 export const App: React.FC = () => {
-  // Main state
+  // Main states
   const [originalImg, setOriginalImg] = useState<HTMLImageElement | null>(null);
   const [maskCanvas, setMaskCanvas] = useState<HTMLCanvasElement | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('Recortando foto...');
   const [isAiComplete, setIsAiComplete] = useState(false);
+
+  // Full image vs Cutout toggle
+  const [isFullImage, setIsFullImage] = useState(false);
 
   // Cancellation ref
   const isCancelledRef = useRef(false);
@@ -117,15 +120,15 @@ export const App: React.FC = () => {
     }
   };
 
-  // Image selection and background removal pipeline
+  // Image selection pipeline
   const handleImageSelected = async (file: File) => {
     isCancelledRef.current = false;
     setIsLoading(true);
     setIsAiComplete(false);
-    setLoadingStep('Optimizando tamaño de foto...');
+    setIsFullImage(false);
+    setLoadingStep('Optimizando foto...');
 
     try {
-      // 1. Pre-scale image down to max 800px (cuts inference time by 25x!)
       const { optimizedBlob, img, width, height } = await optimizeImageForSticker(file, 800);
 
       if (isCancelledRef.current) return;
@@ -133,28 +136,22 @@ export const App: React.FC = () => {
 
       setLoadingStep('Recortando fondo con IA...');
 
-      // 2. Run fast quantized background removal
       const cutoutBlob = await autoRemoveBackground(optimizedBlob);
 
       if (isCancelledRef.current) return;
 
       const cutoutImg = await blobToImage(cutoutBlob);
-
-      // 3. Create Mask Canvas
       const mask = createMaskFromCutout(cutoutImg, width, height);
       setMaskCanvas(mask);
 
-      // 4. Save initial AI state
       const maskCtx = mask.getContext('2d', { willReadFrequently: true });
       if (maskCtx) {
         initialMaskDataRef.current = maskCtx.getImageData(0, 0, mask.width, mask.height);
       }
 
-      // 5. Calculate bounding box for crop
       const initialBox = getMaskBoundingBox(mask);
       setCropBox(initialBox);
 
-      // 6. Reset history
       historyRef.current = [];
       historyIndexRef.current = -1;
       pushHistory(mask);
@@ -164,7 +161,6 @@ export const App: React.FC = () => {
       setShowGhost(false);
       setTextOverlay(null);
 
-      // Brief delay so user sees 100% finish
       setTimeout(() => {
         if (!isCancelledRef.current) {
           setIsLoading(false);
@@ -173,12 +169,11 @@ export const App: React.FC = () => {
     } catch (err) {
       if (isCancelledRef.current) return;
       console.error('Error in AI cutout:', err);
-      showToast('No se pudo procesar automático. Abriendo para recorte manual.');
+      showToast('No se pudo recortar automático. Abriendo para edición manual.');
       handleFallbackManual(file);
     }
   };
 
-  // Fallback when cancelled or error
   const handleFallbackManual = async (file: File | Blob) => {
     try {
       const { img, width, height } = await optimizeImageForSticker(file, 800);
@@ -212,7 +207,6 @@ export const App: React.FC = () => {
     isCancelledRef.current = true;
     setIsLoading(false);
     if (originalImg) {
-      // Setup manual editing immediately
       const mask = document.createElement('canvas');
       mask.width = originalImg.naturalWidth;
       mask.height = originalImg.naturalHeight;
@@ -255,12 +249,18 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('paste', handlePaste);
   }, []);
 
-  // Copy sticker to clipboard
+  // Copy sticker (respects isFullImage state)
   const handleCopySticker = async () => {
     if (!originalImg || !maskCanvas) return;
 
     try {
-      const outCanvas = exportStickerCanvas(originalImg, maskCanvas, textOverlay, cropBox);
+      const outCanvas = exportStickerCanvas(
+        originalImg,
+        maskCanvas,
+        textOverlay,
+        cropBox,
+        isFullImage
+      );
       const success = await copyCanvasToClipboard(outCanvas);
 
       if (success) {
@@ -270,21 +270,25 @@ export const App: React.FC = () => {
           spread: 60,
           origin: { y: 0.85 },
         });
-        showToast('¡Sticker copiado! Pégalo en tu chat de WhatsApp.');
+        showToast(
+          isFullImage
+            ? '¡Foto completa copiada! Pégala en WhatsApp.'
+            : '¡Sticker recortado copiado! Pégalo en WhatsApp.'
+        );
         setTimeout(() => setCopied(false), 3000);
       } else {
         handleDownloadPNG(outCanvas);
-        showToast('Portapapeles no soportado directamente. Descargando PNG para WhatsApp.');
+        showToast('Descargando imagen para WhatsApp.');
       }
     } catch (err) {
       console.error('Error copying sticker:', err);
-      showToast('Error al copiar. Puedes usar el botón de compartir.');
+      showToast('Error al copiar. Usa el botón de compartir.');
     }
   };
 
   const handleDownloadPNG = (canvas: HTMLCanvasElement) => {
     const link = document.createElement('a');
-    link.download = `sticker-${Date.now()}.png`;
+    link.download = `${isFullImage ? 'foto' : 'sticker'}-${Date.now()}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
   };
@@ -292,25 +296,33 @@ export const App: React.FC = () => {
   const handleShareSticker = async () => {
     if (!originalImg || !maskCanvas) return;
 
-    const outCanvas = exportStickerCanvas(originalImg, maskCanvas, textOverlay, cropBox);
+    const outCanvas = exportStickerCanvas(
+      originalImg,
+      maskCanvas,
+      textOverlay,
+      cropBox,
+      isFullImage
+    );
 
     outCanvas.toBlob(async (blob) => {
       if (!blob) return;
 
-      const file = new File([blob], 'sticker.png', { type: 'image/png' });
+      const file = new File([blob], `${isFullImage ? 'foto' : 'sticker'}.png`, {
+        type: 'image/png',
+      });
 
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({
             files: [file],
-            title: 'Sticker para WhatsApp',
+            title: isFullImage ? 'Foto para WhatsApp' : 'Sticker para WhatsApp',
           });
         } catch {
           // Dismissed
         }
       } else {
         handleDownloadPNG(outCanvas);
-        showToast('Descargando sticker transparente (512x512)...');
+        showToast('Descargando imagen transparente (512x512)...');
       }
     }, 'image/png');
   };
@@ -319,6 +331,7 @@ export const App: React.FC = () => {
     setOriginalImg(null);
     setMaskCanvas(null);
     setTool('preview');
+    setIsFullImage(false);
   };
 
   return (
@@ -331,14 +344,17 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Loading Skeleton with 90% progressive trick */}
-      {isLoading ? (
-        <LoadingSkeleton
+      {/* Loading Modal with 90% progress bar and cancel button */}
+      {isLoading && (
+        <LoadingModal
           onCancel={handleCancelLoading}
           statusText={loadingStep}
           isComplete={isAiComplete}
         />
-      ) : !originalImg || !maskCanvas ? (
+      )}
+
+      {/* Main Content Router */}
+      {!originalImg || !maskCanvas ? (
         <LandingPage onImageSelected={handleImageSelected} />
       ) : (
         <div className="flex-1 flex flex-col justify-between max-w-xl mx-auto w-full h-screen max-h-screen overflow-hidden">
@@ -356,10 +372,10 @@ export const App: React.FC = () => {
             <div className="flex items-center gap-1">
               <button
                 onClick={handleUndo}
-                disabled={!canUndo}
+                disabled={!canUndo || isFullImage}
                 title="Deshacer"
                 className={`p-2 rounded-lg transition cursor-pointer ${
-                  canUndo
+                  canUndo && !isFullImage
                     ? 'text-slate-200 hover:bg-slate-800'
                     : 'text-slate-600 cursor-not-allowed'
                 }`}
@@ -368,10 +384,10 @@ export const App: React.FC = () => {
               </button>
               <button
                 onClick={handleRedo}
-                disabled={!canRedo}
+                disabled={!canRedo || isFullImage}
                 title="Rehacer"
                 className={`p-2 rounded-lg transition cursor-pointer ${
-                  canRedo
+                  canRedo && !isFullImage
                     ? 'text-slate-200 hover:bg-slate-800'
                     : 'text-slate-600 cursor-not-allowed'
                 }`}
@@ -380,8 +396,13 @@ export const App: React.FC = () => {
               </button>
               <button
                 onClick={handleResetToAI}
+                disabled={isFullImage}
                 title="Restablecer al recorte inicial"
-                className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition cursor-pointer"
+                className={`p-2 rounded-lg transition cursor-pointer ${
+                  !isFullImage
+                    ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    : 'text-slate-600 cursor-not-allowed'
+                }`}
               >
                 <RotateCcw className="w-4 h-4" />
               </button>
@@ -398,6 +419,7 @@ export const App: React.FC = () => {
               showGhost={showGhost}
               cropBox={cropBox}
               textOverlay={textOverlay}
+              isFullImage={isFullImage}
               onMaskModified={() => {
                 if (maskCanvas) pushHistory(maskCanvas);
               }}
@@ -443,6 +465,16 @@ export const App: React.FC = () => {
               onShareSticker={handleShareSticker}
               copied={copied}
               isProcessing={isLoading}
+              isFullImage={isFullImage}
+              onToggleFullImage={() => {
+                const nextState = !isFullImage;
+                setIsFullImage(nextState);
+                showToast(
+                  nextState
+                    ? 'Modo foto completa (sin recorte)'
+                    : 'Modo sticker recortado'
+                );
+              }}
             />
           </footer>
         </div>

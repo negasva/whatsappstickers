@@ -18,6 +18,7 @@ interface EditorCanvasProps {
   showGhost: boolean;
   cropBox: CropBox;
   textOverlay: TextOverlay | null;
+  isFullImage?: boolean;
   onMaskModified: () => void;
   onCropChange: (box: CropBox) => void;
   onTextPositionChange: (x: number, y: number) => void;
@@ -31,6 +32,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   showGhost,
   cropBox,
   textOverlay,
+  isFullImage = false,
   onMaskModified,
   onCropChange,
   onTextPositionChange,
@@ -96,37 +98,40 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
     ctx.clearRect(0, 0, width, height);
 
-    // 1. Ghost Background (Original Image at ~30% opacity)
-    // Active if tool is brush or eraser, or if explicitly enabled
-    const isGhostMode = showGhost || tool === 'brush' || tool === 'eraser';
-    if (isGhostMode) {
-      ctx.save();
-      ctx.globalAlpha = 0.30; // 30% ghost opacity
+    if (isFullImage) {
+      // FULL IMAGE MODE: Draw entire original image with 100% opacity
       ctx.drawImage(originalImg, 0, 0, width, height);
-      ctx.restore();
-    }
-
-    // 2. Cutout Image at 100% opacity
-    // Composite original image with current mask
-    const compCanvas = compositeCanvasRef.current;
-    if (compCanvas) {
-      if (compCanvas.width !== width || compCanvas.height !== height) {
-        compCanvas.width = width;
-        compCanvas.height = height;
-      }
-      const compCtx = compCanvas.getContext('2d');
-      if (compCtx) {
-        compCtx.clearRect(0, 0, width, height);
-        compCtx.globalCompositeOperation = 'source-over';
-        compCtx.drawImage(originalImg, 0, 0, width, height);
-        compCtx.globalCompositeOperation = 'destination-in';
-        compCtx.drawImage(maskCanvas, 0, 0, width, height);
-
-        // Draw cutout onto main canvas
+    } else {
+      // CUTOUT MODE:
+      // 1. Ghost Background (Original Image at ~30% opacity)
+      const isGhostMode = showGhost || tool === 'brush' || tool === 'eraser';
+      if (isGhostMode) {
         ctx.save();
-        ctx.globalAlpha = 1.0; // 100% opacity for cutout
-        ctx.drawImage(compCanvas, 0, 0, width, height);
+        ctx.globalAlpha = 0.30;
+        ctx.drawImage(originalImg, 0, 0, width, height);
         ctx.restore();
+      }
+
+      // 2. Cutout Image at 100% opacity
+      const compCanvas = compositeCanvasRef.current;
+      if (compCanvas) {
+        if (compCanvas.width !== width || compCanvas.height !== height) {
+          compCanvas.width = width;
+          compCanvas.height = height;
+        }
+        const compCtx = compCanvas.getContext('2d');
+        if (compCtx) {
+          compCtx.clearRect(0, 0, width, height);
+          compCtx.globalCompositeOperation = 'source-over';
+          compCtx.drawImage(originalImg, 0, 0, width, height);
+          compCtx.globalCompositeOperation = 'destination-in';
+          compCtx.drawImage(maskCanvas, 0, 0, width, height);
+
+          ctx.save();
+          ctx.globalAlpha = 1.0;
+          ctx.drawImage(compCanvas, 0, 0, width, height);
+          ctx.restore();
+        }
       }
     }
 
@@ -191,7 +196,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
       ctx.restore();
     }
-  }, [originalImg, maskCanvas, tool, showGhost, cropBox, textOverlay]);
+  }, [originalImg, maskCanvas, tool, showGhost, cropBox, textOverlay, isFullImage]);
 
   useEffect(() => {
     renderCanvas();

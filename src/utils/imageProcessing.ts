@@ -195,7 +195,8 @@ export function exportStickerCanvas(
   originalImg: HTMLImageElement,
   maskCanvas: HTMLCanvasElement,
   textOverlay?: TextOverlay | null,
-  cropBox?: { x: number; y: number; width: number; height: number }
+  cropBox?: { x: number; y: number; width: number; height: number },
+  isFullImage = false
 ): HTMLCanvasElement {
   const targetSize = 512;
   const outCanvas = document.createElement('canvas');
@@ -229,19 +230,22 @@ export function exportStickerCanvas(
     crop.height
   );
 
-  tempCtx.globalCompositeOperation = 'destination-in';
-  tempCtx.drawImage(
-    maskCanvas,
-    crop.x,
-    crop.y,
-    crop.width,
-    crop.height,
-    0,
-    0,
-    crop.width,
-    crop.height
-  );
-  tempCtx.globalCompositeOperation = 'source-over';
+  // Apply cutout mask only when not in full image mode
+  if (!isFullImage) {
+    tempCtx.globalCompositeOperation = 'destination-in';
+    tempCtx.drawImage(
+      maskCanvas,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      crop.width,
+      crop.height
+    );
+    tempCtx.globalCompositeOperation = 'source-over';
+  }
 
   const scale = Math.min((targetSize - 24) / crop.width, (targetSize - 24) / crop.height);
   const drawWidth = crop.width * scale;

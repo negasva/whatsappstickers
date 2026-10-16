@@ -11,6 +11,8 @@ import {
   Check,
   RotateCcw,
   Sparkles,
+  Scissors,
+  Maximize2,
 } from 'lucide-react';
 import type { ToolType } from './EditorCanvas';
 import type { TextOverlay } from '../utils/imageProcessing';
@@ -30,6 +32,8 @@ interface ToolbarProps {
   onShareSticker: () => void;
   copied: boolean;
   isProcessing: boolean;
+  isFullImage: boolean;
+  onToggleFullImage: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -47,13 +51,57 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onShareSticker,
   copied,
   isProcessing,
+  isFullImage,
+  onToggleFullImage,
 }) => {
   return (
-    <div className="w-full max-w-xl mx-auto flex flex-col gap-2.5 px-3 pb-3 select-none">
-      {/* 1. Contextual Controls (sliders / text inputs depending on active tool) */}
+    <div className="w-full max-w-xl mx-auto flex flex-col gap-2 px-3 pb-3 select-none">
+      {/* 1. Toggle: Recortada vs Foto Completa */}
+      <div className="flex items-center p-1 bg-slate-900/95 border border-slate-800 rounded-2xl shadow-sm">
+        <button
+          onClick={() => {
+            if (isFullImage) onToggleFullImage();
+          }}
+          className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            !isFullImage
+              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Scissors className="w-3.5 h-3.5" />
+          <span>Versión recortada</span>
+        </button>
+
+        <button
+          onClick={() => {
+            if (!isFullImage) onToggleFullImage();
+          }}
+          className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            isFullImage
+              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+          <span>Foto completa</span>
+        </button>
+      </div>
+
+      {/* 2. Contextual Controls (sliders / text inputs depending on active tool) */}
       <div className="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-800 p-2.5 shadow-lg">
-        {/* Brush & Eraser Size Slider */}
-        {(tool === 'brush' || tool === 'eraser') && (
+        {/* If in full image mode and not using text/crop */}
+        {isFullImage && tool !== 'text' && tool !== 'crop' && (
+          <div className="flex items-center justify-between text-xs text-slate-300 px-2 py-0.5">
+            <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+              <Maximize2 className="w-3.5 h-3.5" />
+              Foto completa activa (sin recortes)
+            </span>
+            <span className="text-[11px] text-slate-400">Lista para copiar</span>
+          </div>
+        )}
+
+        {/* Brush & Eraser Size Slider (only relevant in cutout mode) */}
+        {!isFullImage && (tool === 'brush' || tool === 'eraser') && (
           <div className="flex items-center gap-3 px-1">
             <span className="text-xs font-semibold text-slate-300 shrink-0">
               {tool === 'brush' ? '🖌️ Pincel' : '🧹 Borrador'}:
@@ -147,8 +195,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           </div>
         )}
 
-        {/* Preview / Default Info */}
-        {tool === 'preview' && (
+        {/* Cutout Preview Info */}
+        {!isFullImage && tool === 'preview' && (
           <div className="flex items-center justify-between text-xs text-slate-400 px-2 py-0.5">
             <span>✨ Recorte inteligente activo</span>
             <span className="text-[11px] text-emerald-400/80">Listo para copiar</span>
@@ -156,12 +204,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         )}
       </div>
 
-      {/* 2. Compact Tool Selection Bar */}
+      {/* 3. Tool Selection Bar */}
       <div className="flex items-center justify-between gap-1.5 bg-slate-900/80 border border-slate-800 rounded-2xl p-1.5 shadow-md">
         <button
-          onClick={() => onToolSelect(tool === 'brush' ? 'preview' : 'brush')}
+          onClick={() => {
+            if (isFullImage) onToggleFullImage(); // Switch to cutout if clicking brush
+            onToolSelect(tool === 'brush' ? 'preview' : 'brush');
+          }}
           className={`flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl text-xs font-medium transition cursor-pointer ${
-            tool === 'brush'
+            tool === 'brush' && !isFullImage
               ? 'bg-emerald-500 text-slate-950 font-bold shadow-md shadow-emerald-500/30'
               : 'text-slate-300 hover:bg-slate-800/80'
           }`}
@@ -172,9 +223,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </button>
 
         <button
-          onClick={() => onToolSelect(tool === 'eraser' ? 'preview' : 'eraser')}
+          onClick={() => {
+            if (isFullImage) onToggleFullImage(); // Switch to cutout if clicking eraser
+            onToolSelect(tool === 'eraser' ? 'preview' : 'eraser');
+          }}
           className={`flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl text-xs font-medium transition cursor-pointer ${
-            tool === 'eraser'
+            tool === 'eraser' && !isFullImage
               ? 'bg-emerald-500 text-slate-950 font-bold shadow-md shadow-emerald-500/30'
               : 'text-slate-300 hover:bg-slate-800/80'
           }`}
@@ -210,22 +264,24 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span className="text-[11px]">Texto</span>
         </button>
 
-        {/* Ghost background guide toggle */}
-        <button
-          onClick={onToggleGhost}
-          className={`px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer flex flex-col items-center justify-center ${
-            showGhost
-              ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-              : 'text-slate-400 hover:bg-slate-800/80'
-          }`}
-          title="Alternar fondo guía al 30%"
-        >
-          {showGhost ? <Eye className="w-4 h-4 mb-0.5" /> : <EyeOff className="w-4 h-4 mb-0.5" />}
-          <span className="text-[10px]">Guía</span>
-        </button>
+        {/* Ghost background guide toggle (only relevant when in cutout mode) */}
+        {!isFullImage && (
+          <button
+            onClick={onToggleGhost}
+            className={`px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer flex flex-col items-center justify-center ${
+              showGhost
+                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                : 'text-slate-400 hover:bg-slate-800/80'
+            }`}
+            title="Alternar fondo guía al 30%"
+          >
+            {showGhost ? <Eye className="w-4 h-4 mb-0.5" /> : <EyeOff className="w-4 h-4 mb-0.5" />}
+            <span className="text-[10px]">Guía</span>
+          </button>
+        )}
       </div>
 
-      {/* 3. Primary Bottom CTA (COPY TO WHATSAPP) */}
+      {/* 4. Primary Bottom CTA (COPY TO WHATSAPP) */}
       <div className="flex items-center gap-2 mt-1">
         <button
           onClick={onCopySticker}
@@ -244,7 +300,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           ) : (
             <>
               <Copy className="w-5 h-5 stroke-[2.5]" />
-              <span>Copiar Sticker</span>
+              <span>
+                {isFullImage ? 'Copiar Foto Completa' : 'Copiar Sticker Recortado'}
+              </span>
             </>
           )}
         </button>
