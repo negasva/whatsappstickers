@@ -79,6 +79,8 @@ export async function autoRemoveBackground(
   return await removeBackground(imageSource, {
     model: 'isnet_quint8', // 4x smaller, fastest inference
     rescale: true,
+    proxyToWorker: false, // Prevents mobile Safari worker crashes and blob CORS errors
+    device: 'cpu', // Reliable CPU execution on iOS Safari
     progress: (_key, current, total) => {
       if (total > 0 && onProgress) {
         onProgress(Math.min(1, current / total));

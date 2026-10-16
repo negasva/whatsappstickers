@@ -463,6 +463,18 @@ export const App: React.FC = () => {
               }}
               onCopySticker={handleCopySticker}
               onShareSticker={handleShareSticker}
+              onDownloadSticker={() => {
+                if (!originalImg || !maskCanvas) return;
+                const outCanvas = exportStickerCanvas(
+                  originalImg,
+                  maskCanvas,
+                  textOverlay,
+                  cropBox,
+                  isFullImage
+                );
+                handleDownloadPNG(outCanvas);
+                showToast('¡Guardado! Ve a Fotos para agregarlo a WhatsApp sin borde.');
+              }}
               copied={copied}
               isProcessing={isLoading}
               isFullImage={isFullImage}

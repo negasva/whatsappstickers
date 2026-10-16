@@ -13,6 +13,7 @@ import {
   Sparkles,
   Scissors,
   Maximize2,
+  Download,
 } from 'lucide-react';
 import type { ToolType } from './EditorCanvas';
 import type { TextOverlay } from '../utils/imageProcessing';
@@ -30,6 +31,7 @@ interface ToolbarProps {
   onResetCrop: () => void;
   onCopySticker: () => void;
   onShareSticker: () => void;
+  onDownloadSticker: () => void;
   copied: boolean;
   isProcessing: boolean;
   isFullImage: boolean;
@@ -49,6 +51,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onResetCrop,
   onCopySticker,
   onShareSticker,
+  onDownloadSticker,
   copied,
   isProcessing,
   isFullImage,
@@ -199,7 +202,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         {!isFullImage && tool === 'preview' && (
           <div className="flex items-center justify-between text-xs text-slate-400 px-2 py-0.5">
             <span>✨ Recorte inteligente activo</span>
-            <span className="text-[11px] text-emerald-400/80">Listo para copiar</span>
+            <span className="text-[11px] text-emerald-400/80">Listo para copiar o guardar</span>
           </div>
         )}
       </div>
@@ -208,7 +211,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <div className="flex items-center justify-between gap-1.5 bg-slate-900/80 border border-slate-800 rounded-2xl p-1.5 shadow-md">
         <button
           onClick={() => {
-            if (isFullImage) onToggleFullImage(); // Switch to cutout if clicking brush
+            if (isFullImage) onToggleFullImage();
             onToolSelect(tool === 'brush' ? 'preview' : 'brush');
           }}
           className={`flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl text-xs font-medium transition cursor-pointer ${
@@ -224,7 +227,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
         <button
           onClick={() => {
-            if (isFullImage) onToggleFullImage(); // Switch to cutout if clicking eraser
+            if (isFullImage) onToggleFullImage();
             onToolSelect(tool === 'eraser' ? 'preview' : 'eraser');
           }}
           className={`flex-1 flex flex-col items-center justify-center py-2 px-1 rounded-xl text-xs font-medium transition cursor-pointer ${
@@ -264,7 +267,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span className="text-[11px]">Texto</span>
         </button>
 
-        {/* Ghost background guide toggle (only relevant when in cutout mode) */}
         {!isFullImage && (
           <button
             onClick={onToggleGhost}
@@ -281,12 +283,13 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         )}
       </div>
 
-      {/* 4. Primary Bottom CTA (COPY TO WHATSAPP) */}
+      {/* 4. Action Buttons */}
       <div className="flex items-center gap-2 mt-1">
+        {/* Copy Button */}
         <button
           onClick={onCopySticker}
           disabled={isProcessing}
-          className={`flex-1 relative py-4 px-6 rounded-2xl font-black text-base flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer shadow-lg ${
+          className={`flex-1 relative py-4 px-4 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer shadow-lg ${
             copied
               ? 'bg-emerald-400 text-slate-950 shadow-emerald-500/40 scale-[1.01]'
               : 'bg-[#25D366] hover:bg-[#22c35e] text-slate-950 shadow-[#25D366]/30 hover:shadow-[#25D366]/50 active:scale-[0.98]'
@@ -301,21 +304,40 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             <>
               <Copy className="w-5 h-5 stroke-[2.5]" />
               <span>
-                {isFullImage ? 'Copiar Foto Completa' : 'Copiar Sticker Recortado'}
+                {isFullImage ? 'Copiar Foto' : 'Copiar Sticker'}
               </span>
             </>
           )}
         </button>
 
+        {/* Download / Save to Photos (Essential for iOS borderless sticker) */}
+        <button
+          onClick={onDownloadSticker}
+          disabled={isProcessing}
+          title="Guardar imagen transparente en tu dispositivo"
+          className="py-4 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-xs sm:text-sm transition active:scale-95 border border-slate-700/80 flex items-center gap-1.5 cursor-pointer"
+        >
+          <Download className="w-4 h-4 text-emerald-400" />
+          <span>Guardar</span>
+        </button>
+
+        {/* Share Button */}
         <button
           onClick={onShareSticker}
           disabled={isProcessing}
-          title="Compartir o guardar imagen"
+          title="Compartir directo a WhatsApp u otra app"
           className="p-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition active:scale-95 border border-slate-700/80 flex items-center justify-center cursor-pointer"
         >
           <Share2 className="w-5 h-5" />
         </button>
       </div>
+
+      {/* iOS Zero-border Hint */}
+      {!isFullImage && (
+        <p className="text-[11px] text-slate-400 text-center px-1">
+          💡 En iPhone: toca <strong>Guardar</strong>, abre Fotos, mantén presionado el sujeto y dale <strong className="text-slate-200">"Añadir sticker"</strong> para enviarlo en WhatsApp <span className="text-emerald-400 font-semibold">100% sin borde blanco</span>.
+        </p>
+      )}
     </div>
   );
 };

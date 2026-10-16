@@ -202,6 +202,16 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     renderCanvas();
   }, [renderCanvas]);
 
+  const animFrameRef = useRef<number | null>(null);
+
+  const scheduleRender = useCallback(() => {
+    if (animFrameRef.current !== null) return;
+    animFrameRef.current = requestAnimationFrame(() => {
+      renderCanvas();
+      animFrameRef.current = null;
+    });
+  }, [renderCanvas]);
+
   // Pointer event handlers for drawing (Brush / Eraser)
   const drawStroke = (x: number, y: number) => {
     const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
@@ -213,12 +223,10 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     maskCtx.lineWidth = brushSize;
 
     if (tool === 'brush') {
-      // Paint white to restore pixels
       maskCtx.globalCompositeOperation = 'source-over';
       maskCtx.strokeStyle = 'white';
       maskCtx.fillStyle = 'white';
     } else if (tool === 'eraser') {
-      // Erase alpha from mask
       maskCtx.globalCompositeOperation = 'destination-out';
       maskCtx.strokeStyle = 'rgba(0,0,0,1)';
       maskCtx.fillStyle = 'rgba(0,0,0,1)';
@@ -236,11 +244,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     maskCtx.restore();
 
     lastPointRef.current = { x, y };
-    renderCanvas();
+    scheduleRender();
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignored
+    }
     const coords = getImageCoordinates(e.clientX, e.clientY);
 
     if (tool === 'brush' || tool === 'eraser') {
@@ -266,15 +278,17 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const handlePointerMove = (e: React.PointerEvent) => {
     const coords = getImageCoordinates(e.clientX, e.clientY);
 
-    // Track cursor on canvas
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      setCursorPos({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-        visible: tool === 'brush' || tool === 'eraser',
-      });
+    // Track cursor ONLY on desktop mouse (never on mobile touch to avoid 120fps state re-renders)
+    if (e.pointerType === 'mouse') {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        setCursorPos({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+          visible: tool === 'brush' || tool === 'eraser',
+        });
+      }
     }
 
     if (isDrawingRef.current && (tool === 'brush' || tool === 'eraser')) {
