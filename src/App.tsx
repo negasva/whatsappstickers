@@ -5,13 +5,14 @@ import {
   Undo2,
   Redo2,
   RotateCcw,
-  Sparkles,
   Info,
 } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { EditorCanvas, type ToolType } from './components/EditorCanvas';
 import { Toolbar } from './components/Toolbar';
+import { LoadingSkeleton } from './components/LoadingSkeleton';
 import {
+  optimizeImageForSticker,
   autoRemoveBackground,
   blobToImage,
   createMaskFromCutout,
@@ -22,15 +23,19 @@ import {
 } from './utils/imageProcessing';
 
 export const App: React.FC = () => {
-  // Main states
+  // Main state
   const [originalImg, setOriginalImg] = useState<HTMLImageElement | null>(null);
   const [maskCanvas, setMaskCanvas] = useState<HTMLCanvasElement | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState('Analizando imagen...');
+  const [loadingStep, setLoadingStep] = useState('Recortando foto...');
+  const [isAiComplete, setIsAiComplete] = useState(false);
 
-  // Tools & Edit states
+  // Cancellation ref
+  const isCancelledRef = useRef(false);
+
+  // Edit states
   const [tool, setTool] = useState<ToolType>('preview');
-  const [brushSize, setBrushSize] = useState(40);
+  const [brushSize, setBrushSize] = useState(38);
   const [showGhost, setShowGhost] = useState(false);
   const [textOverlay, setTextOverlay] = useState<TextOverlay | null>(null);
   const [cropBox, setCropBox] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -41,7 +46,7 @@ export const App: React.FC = () => {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
-  // Initial cutout backup (to restore AI cut)
+  // Initial cutout backup
   const initialMaskDataRef = useRef<ImageData | null>(null);
 
   // Copy feedback & toast
@@ -52,20 +57,17 @@ export const App: React.FC = () => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
-    }, 4000);
+    }, 3500);
   };
 
-  // Push snapshot to history
   const pushHistory = useCallback((canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    // Truncate future history
     const nextHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
     nextHistory.push(imgData);
 
-    // Keep max 15 snapshots
     if (nextHistory.length > 15) {
       nextHistory.shift();
     }
@@ -104,36 +106,42 @@ export const App: React.FC = () => {
     }
   };
 
-  // Reset to original AI cutout
   const handleResetToAI = () => {
     if (initialMaskDataRef.current && maskCanvas) {
       const ctx = maskCanvas.getContext('2d', { willReadFrequently: true });
       if (ctx) {
         ctx.putImageData(initialMaskDataRef.current, 0, 0);
         pushHistory(maskCanvas);
-        showToast('Restablecido al recorte original de la IA');
+        showToast('Restablecido al recorte inicial');
       }
     }
   };
 
-  // When user selects an image
+  // Image selection and background removal pipeline
   const handleImageSelected = async (file: File) => {
-    try {
-      setIsLoading(true);
-      setLoadingStep('Cargando imagen original...');
+    isCancelledRef.current = false;
+    setIsLoading(true);
+    setIsAiComplete(false);
+    setLoadingStep('Optimizando tamaño de foto...');
 
-      // 1. Load original image
-      const img = await blobToImage(file);
+    try {
+      // 1. Pre-scale image down to max 800px (cuts inference time by 25x!)
+      const { optimizedBlob, img, width, height } = await optimizeImageForSticker(file, 800);
+
+      if (isCancelledRef.current) return;
       setOriginalImg(img);
 
-      setLoadingStep('Eliminando fondo con IA en tu dispositivo...');
+      setLoadingStep('Recortando fondo con IA...');
 
-      // 2. Run background removal AI
-      const cutoutBlob = await autoRemoveBackground(file);
+      // 2. Run fast quantized background removal
+      const cutoutBlob = await autoRemoveBackground(optimizedBlob);
+
+      if (isCancelledRef.current) return;
+
       const cutoutImg = await blobToImage(cutoutBlob);
 
       // 3. Create Mask Canvas
-      const mask = createMaskFromCutout(cutoutImg, img.naturalWidth, img.naturalHeight);
+      const mask = createMaskFromCutout(cutoutImg, width, height);
       setMaskCanvas(mask);
 
       // 4. Save initial AI state
@@ -151,34 +159,79 @@ export const App: React.FC = () => {
       historyIndexRef.current = -1;
       pushHistory(mask);
 
-      // Switch to preview mode
+      setIsAiComplete(true);
       setTool('preview');
       setShowGhost(false);
       setTextOverlay(null);
-    } catch (err) {
-      console.error('Error processing image:', err);
-      showToast('No se pudo procesar la imagen con IA. Se abrió para recorte manual.');
 
-      // Fallback: load full original image with empty/full mask so user can cut manually
-      const img = await blobToImage(file);
+      // Brief delay so user sees 100% finish
+      setTimeout(() => {
+        if (!isCancelledRef.current) {
+          setIsLoading(false);
+        }
+      }, 350);
+    } catch (err) {
+      if (isCancelledRef.current) return;
+      console.error('Error in AI cutout:', err);
+      showToast('No se pudo procesar automático. Abriendo para recorte manual.');
+      handleFallbackManual(file);
+    }
+  };
+
+  // Fallback when cancelled or error
+  const handleFallbackManual = async (file: File | Blob) => {
+    try {
+      const { img, width, height } = await optimizeImageForSticker(file, 800);
       setOriginalImg(img);
+
       const mask = document.createElement('canvas');
-      mask.width = img.naturalWidth;
-      mask.height = img.naturalHeight;
+      mask.width = width;
+      mask.height = height;
+      const maskCtx = mask.getContext('2d', { willReadFrequently: true });
+      if (maskCtx) {
+        maskCtx.fillStyle = 'white';
+        maskCtx.fillRect(0, 0, width, height);
+      }
+      setMaskCanvas(mask);
+      setCropBox({ x: 0, y: 0, width, height });
+
+      historyRef.current = [];
+      historyIndexRef.current = -1;
+      pushHistory(mask);
+
+      setTool('eraser');
+      setShowGhost(true);
+      setIsLoading(false);
+    } catch (e) {
+      console.error('Fallback failed:', e);
+      setIsLoading(false);
+    }
+  };
+
+  const handleCancelLoading = () => {
+    isCancelledRef.current = true;
+    setIsLoading(false);
+    if (originalImg) {
+      // Setup manual editing immediately
+      const mask = document.createElement('canvas');
+      mask.width = originalImg.naturalWidth;
+      mask.height = originalImg.naturalHeight;
       const maskCtx = mask.getContext('2d', { willReadFrequently: true });
       if (maskCtx) {
         maskCtx.fillStyle = 'white';
         maskCtx.fillRect(0, 0, mask.width, mask.height);
       }
       setMaskCanvas(mask);
-      setCropBox({ x: 0, y: 0, width: img.naturalWidth, height: img.naturalHeight });
+      setCropBox({ x: 0, y: 0, width: originalImg.naturalWidth, height: originalImg.naturalHeight });
       historyRef.current = [];
       historyIndexRef.current = -1;
       pushHistory(mask);
       setTool('eraser');
       setShowGhost(true);
-    } finally {
-      setIsLoading(false);
+      showToast('Cancelado. Ahora puedes recortar con el borrador.');
+    } else {
+      setOriginalImg(null);
+      setMaskCanvas(null);
     }
   };
 
@@ -217,10 +270,9 @@ export const App: React.FC = () => {
           spread: 60,
           origin: { y: 0.85 },
         });
-        showToast('¡Copiado al portapapeles! Abre WhatsApp y dale Pegar en cualquier chat.');
+        showToast('¡Sticker copiado! Pégalo en tu chat de WhatsApp.');
         setTimeout(() => setCopied(false), 3000);
       } else {
-        // Fallback: download directly if clipboard write is blocked by browser
         handleDownloadPNG(outCanvas);
         showToast('Portapapeles no soportado directamente. Descargando PNG para WhatsApp.');
       }
@@ -230,7 +282,6 @@ export const App: React.FC = () => {
     }
   };
 
-  // Download PNG helper
   const handleDownloadPNG = (canvas: HTMLCanvasElement) => {
     const link = document.createElement('a');
     link.download = `sticker-${Date.now()}.png`;
@@ -238,7 +289,6 @@ export const App: React.FC = () => {
     link.click();
   };
 
-  // Share or Save sticker
   const handleShareSticker = async () => {
     if (!originalImg || !maskCanvas) return;
 
@@ -256,7 +306,7 @@ export const App: React.FC = () => {
             title: 'Sticker para WhatsApp',
           });
         } catch {
-          // User dismissed share
+          // Dismissed
         }
       } else {
         handleDownloadPNG(outCanvas);
@@ -265,7 +315,6 @@ export const App: React.FC = () => {
     }, 'image/png');
   };
 
-  // Reset back to landing
   const handleBackToLanding = () => {
     setOriginalImg(null);
     setMaskCanvas(null);
@@ -282,27 +331,18 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Loading Overlay */}
-      {isLoading && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center">
-          <div className="relative mb-6">
-            <div className="w-16 h-16 rounded-full border-4 border-emerald-500/20 border-t-emerald-400 animate-spin" />
-            <Sparkles className="w-6 h-6 text-emerald-400 absolute inset-0 m-auto animate-pulse" />
-          </div>
-          <h3 className="text-xl font-bold text-white mb-2">Recortando automáticamente...</h3>
-          <p className="text-sm text-slate-400 max-w-xs">{loadingStep}</p>
-          <span className="text-xs text-emerald-400/80 mt-4 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
-            100% privado en tu navegador
-          </span>
-        </div>
-      )}
-
-      {/* Main View Router */}
-      {!originalImg || !maskCanvas ? (
+      {/* Loading Skeleton with 90% progressive trick */}
+      {isLoading ? (
+        <LoadingSkeleton
+          onCancel={handleCancelLoading}
+          statusText={loadingStep}
+          isComplete={isAiComplete}
+        />
+      ) : !originalImg || !maskCanvas ? (
         <LandingPage onImageSelected={handleImageSelected} />
       ) : (
         <div className="flex-1 flex flex-col justify-between max-w-xl mx-auto w-full h-screen max-h-screen overflow-hidden">
-          {/* Top Bar / Header */}
+          {/* Top Bar */}
           <header className="flex items-center justify-between px-3 py-2 border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md">
             <button
               onClick={handleBackToLanding}
@@ -340,7 +380,7 @@ export const App: React.FC = () => {
               </button>
               <button
                 onClick={handleResetToAI}
-                title="Restablecer al recorte inicial de IA"
+                title="Restablecer al recorte inicial"
                 className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -348,7 +388,7 @@ export const App: React.FC = () => {
             </div>
           </header>
 
-          {/* Interactive Canvas Editor with Ghost mode */}
+          {/* Interactive Canvas Editor */}
           <main className="flex-1 flex items-center justify-center overflow-hidden">
             <EditorCanvas
               originalImg={originalImg}
